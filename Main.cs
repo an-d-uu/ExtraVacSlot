@@ -17,13 +17,72 @@ namespace ExtraVacSlot
         internal static string modName = $"{modAssembly.GetName().Name}";
         internal static string modDir = $"{System.Environment.CurrentDirectory}\\SRML\\Mods\\{modName}";
         public static readonly int defaultSlots = Traverse.Create<AmmoSlotUI>().Field("MAX_SLOTS").GetValue<int>();
+        public static Dictionary<string, string> nameReplace = new Dictionary<string, string> // Used for dynamically generating KeyCode nicknames
+        {
+            ["Alpha"] = "",
+            ["Keypad"] = "Num",
+            ["Plus"] = "+",
+            ["Minus"] = "-",
+            ["Divide"] = "/",
+            ["Multiply"] = "*",
+            ["Period"] = ".",
+            ["Equals"] = "=",
+            ["Left"] = "Lf",
+            ["Right"] = "Rt",
+            ["Windows"] = "Win",
+            ["Control"] = "Ctrl"
+        };
+        public static Dictionary<string, KeyCode> nickname = new Dictionary<string, KeyCode> // Stores a list of nicknames for the KeyCodes
+        {
+            [";"] = KeyCode.Semicolon,
+            ["'"] = KeyCode.Quote,
+            ["/"] = KeyCode.Slash,
+            ["\\"] = KeyCode.Backslash,
+            ["Ins"] = KeyCode.Insert,
+            ["Del"] = KeyCode.Delete,
+            ["PgDn"] = KeyCode.PageDown,
+            ["PgUp"] = KeyCode.PageUp,
+            ["`"] = KeyCode.BackQuote,
+            ["Left"] = KeyCode.LeftArrow,
+            ["Right"] = KeyCode.RightArrow,
+            ["Up"] = KeyCode.UpArrow,
+            ["Down"] = KeyCode.DownArrow,
+            ["("] = KeyCode.LeftParen,
+            ["["] = KeyCode.LeftBracket,
+            ["{"] = KeyCode.LeftCurlyBracket,
+            [")"] = KeyCode.RightParen,
+            ["]"] = KeyCode.RightBracket,
+            ["}"] = KeyCode.RightCurlyBracket
+        };
 
         public override void PreLoad()
         {
+            foreach (KeyCode k in System.Enum.GetValues(typeof(KeyCode)))
+            {
+                if (nickname.ContainsValue(k))
+                    continue;
+                bool flag = false;
+                string name = k.ToString();
+                foreach (var pair in nameReplace)
+                    if (name.Contains(pair.Key))
+                    {
+                        name = name.Replace(pair.Key, pair.Value);
+                        flag = true;
+                    }
+                if (flag)
+                    nickname.Add(name, k);
+            }
             HarmonyInstance.PatchAll();
             Console.RegisterCommand(new ChangeSlotsCommand());
-            Console.RegisterCommand(new SelectSlotCommand());
+            Console.RegisterCommand(new SetSlotBindCommand());
         }
+        /*public override void PostLoad()
+        {
+            string str = "Key nicknames:";
+            foreach (var name in nickname)
+                str += "\n • KeyCode." + name.Value + " = \"" + name.Key + "\"";
+            Log(str);
+        }*/
         public static void Log(string message) => Console.Log($"[{modName}]: " + message);
         public static void LogError(string message) => Console.LogError($"[{modName}]: " + message);
         public static void LogWarning(string message) => Console.LogWarning($"[{modName}]: " + message);
@@ -46,6 +105,14 @@ namespace ExtraVacSlot
         public static Ammo.Slot Clone(this Ammo.Slot slot) => new Ammo.Slot(slot.id, slot.count) { emotions = slot.emotions };
         public static AmmoDataV02 Clone(this AmmoDataV02 ammo) => new AmmoDataV02() { count = ammo.count, id = ammo.id, emotionData = ammo.emotionData };
         public static List<T> ToList<T>(this T[] array) => new List<T>(array);
+        public static bool TryParseKeyCode(this string value, out KeyCode key) => Main.nickname.TryGetValue(value, out key) || KeyCode.TryParse(value, out key);
+        public static string GetName(this KeyCode key)
+        {
+            foreach (var pair in Main.nickname)
+                if (pair.Value == key)
+                    return pair.Key;
+            return key.ToString();
+        }
     }
 
     [HarmonyPatch(typeof(PlayerState), "Reset")]
@@ -124,46 +191,77 @@ namespace ExtraVacSlot
                     keyBinding = newSlot.transform.Find("Keybinding").gameObject,
                     label = newSlot.transform.Find("Label").GetComponent<TMPro.TMP_Text>()
                 };
-                Patch_XlateKeyText_OnKeysChanged.custom.Add(sU[i].keyBinding.GetComponentInChildren<XlateKeyText>());
                 Main.Insert(ref ___lastSlotIds, ___lastSlotIds[0], 0);
             }
             Main.InsertRange(ref ___lastSlotCounts, new int[extraSlots], 0);
             Main.InsertRange(ref ___lastSlotMaxAmmos, new int[extraSlots], 0);
+            var keyText = new List<XlateKeyText>();
+            for (int i = 0; i < Main.defaultSlots; i++)
+                keyText.Add(__instance.slots[i].keyBinding.GetComponentInChildren<XlateKeyText>());
             Main.InsertRange(ref __instance.slots, sU, 0);
+            for (int i = 0; i < __instance.slots.Length; i++)
+            {
+                var key = __instance.slots[i].keyBinding.GetComponentInChildren<XlateKeyText>();
+                if (i < keyText.Count)
+                    CopySettings(key, keyText[i]);
+                else if (Patch_XlateKeyText_OnKeysChanged.custom.ContainsKey(key))
+                    Patch_XlateKeyText_OnKeysChanged.custom[key] = i;
+                else
+                    Patch_XlateKeyText_OnKeysChanged.custom.Add(key, i);
+            }
+            
+        }
+        public static void CopySettings(XlateKeyText target, XlateKeyText source)
+        {
+            target.key = source.key;
+            target.inputKey = source.inputKey;
+            target.bundlePath = source.bundlePath;
+            Traverse.Create(target).Field("bundle").SetValue(Traverse.Create(target).Field("bundle").GetValue());
         }
     }
 
     [HarmonyPatch(typeof(XlateKeyText), "OnKeysChanged")]
     class Patch_XlateKeyText_OnKeysChanged
     {
-        public static List<XlateKeyText> custom = new List<XlateKeyText>();
+        public static Dictionary<XlateKeyText, int> custom = new Dictionary<XlateKeyText, int>();
         public static bool Prefix(XlateKeyText __instance, Text ___text, TMPro.TMP_Text ___meshText)
         {
-            if (!custom.Contains(__instance))
+            if (!custom.ContainsKey(__instance))
                 return true;
             if (___text)
-                ___text.text = "?";
+                ___text.text = Config.GetCustomBind(custom[__instance]);
             if (___meshText)
-                ___meshText.text = "?";
+                ___meshText.text = Config.GetCustomBind(custom[__instance]);
             return false;
+        }
+        public static void Update(int slot)
+        {
+            var text = Config.GetCustomBind(slot);
+            foreach (var pair in custom)
+                if (pair.Key && pair.Value == slot)
+                {
+                    var traverse = Traverse.Create(pair.Key);
+                    var t = traverse.Field("text").GetValue<Text>();
+                    if (t)
+                        t.text = text;
+                    var tt = traverse.Field("meshText").GetValue<TMPro.TMP_Text>();
+                    if (tt)
+                        tt.text = text;
+                }
         }
     }
 
     [HarmonyPatch(typeof(WeaponVacuum), "UpdateSlotForInputs")]
     class Patch_WeaponVacuum_UpdateSlotForInputs
     {
-        public static bool calling = false;
-        public static void Prefix() => calling = true;
-        public static void Postfix() => calling = false;
-    }
-
-    [HarmonyPatch(typeof(Ammo), "SetAmmoSlot")]
-    class Patch_Ammo_SetAmmoSlot
-    {
-        public static void Prefix(ref int idx)
+        public static void Postfix(WeaponVacuum __instance, PlayerState ___player, Animator ___vacAnimator, int ___animSwitchSlotsId)
         {
-            if (Patch_WeaponVacuum_UpdateSlotForInputs.calling)
-                idx += Config.slots - Main.defaultSlots;
+            foreach (var pair in Config.GetBindData())
+                if (Input.GetKeyDown(pair.Value) && ___player.Ammo.SetAmmoSlot(pair.Key))
+                {
+                    Traverse.Create(__instance).Method("PlayTransientAudio", __instance.vacAmmoSelectCue, false);
+                    ___vacAnimator.SetTrigger(___animSwitchSlotsId);
+                }
         }
     }
 
@@ -209,18 +307,13 @@ namespace ExtraVacSlot
         }
     }
 
-    class SelectSlotCommand : ConsoleCommand
+    class SetSlotBindCommand : ConsoleCommand
     {
-        public override string Usage => "selectslot <slot index>";
-        public override string ID => "selectslot";
+        public override string Usage => "bindslot <slot index> [key]";
+        public override string ID => "bindslot";
         public override string Description => "sets the selected vac slot";
         public override bool Execute(string[] args)
         {
-            if (!SRSingleton<SceneContext>.Instance || !SRSingleton<SceneContext>.Instance.PlayerState)
-            {
-                Main.LogError("No player found");
-                return true;
-            }
             if (args.Length < 1)
             {
                 Main.Log("Not enough arguments");
@@ -229,25 +322,35 @@ namespace ExtraVacSlot
             if (!int.TryParse(args[0], out int v))
             {
                 Main.LogError(args[0] + " failed to parse as a number");
-                return false;
+                return true;
             }
             if (v < 0)
             {
                 Main.LogError("Value cannot be less than 0");
                 return true;
             }
-            if (v >= Config.slots)
+            if (args.Length >= 2)
             {
-                Main.LogError("Value cannot be more than the highest slot index");
-                return true;
-            }
-            var ammo = SRSingleton<SceneContext>.Instance.PlayerState.Ammo;
-            var vac = SRSingleton<SceneContext>.Instance.Player.GetComponentInChildren<WeaponVacuum>();
-            var tVac = Traverse.Create(vac);
-            if (ammo.SetAmmoSlot(v)) {
-                tVac.Method("PlayTransientAudio", vac.vacAmmoSelectCue, false);
-                tVac.Field("vacAnimator").GetValue<Animator>().SetTrigger(tVac.Field("animSwitchSlotsId").GetValue<int>());
-            }
+                if (!args[1].TryParseKeyCode(out KeyCode k))
+                {
+                    Main.LogError(args[1] + " failed to parse as a key");
+                    return true;
+                }
+                Config.SetBind(v, k);
+                Traverse.Create<Console>().Field("commands").GetValue<Dictionary<string, ConsoleCommand>>().Values.DoIf(
+                    (c) => c is SRML.Console.Commands.ConfigCommand,
+                    (c) => c.Execute(new string[] {
+                    "extravacslot",
+                    "interal config",
+                    "CONFIG",
+                    "binds",
+                    Config.binds
+                    })
+                );
+                Patch_XlateKeyText_OnKeysChanged.Update(v);
+                Main.LogSuccess("Bind has been updated");
+            } else
+                Main.Log("Bind for slot " + v + " is " + Config.GetCustomBind(v));
             return true;
         }
     }
@@ -260,5 +363,63 @@ namespace ExtraVacSlot
         }
         public static int extraSlots = 3;
         public static int slots => Main.defaultSlots + extraSlots;
+        public static string binds = "";
+        public static void SetBind(int slot, KeyCode key)
+        {
+            if (key == KeyCode.None)
+            {
+                RemoveBind(slot);
+                return;
+            }
+            var data = GetBindData();
+            if (data.ContainsKey(slot))
+                data[slot] = key;
+            else
+                data.Add(slot, key);
+            SetBindData(data);
+        }
+        public static KeyCode GetBind(int slot)
+        {
+            var data = GetBindData();
+            if (data.ContainsKey(slot))
+                return data[slot];
+            else
+                return KeyCode.None;
+        }
+        public static void RemoveBind(int slot)
+        {
+            var data = GetBindData();
+            if (data.ContainsKey(slot))
+                data.Remove(slot);
+            SetBindData(data);
+        }
+        public static Dictionary<int, KeyCode> GetBindData()
+        {
+            var d = new Dictionary<int, KeyCode>();
+            if (binds == "")
+                return d;
+            var pairs = binds.Split(';');
+            foreach (var pair in pairs)
+            {
+                if (pair == "")
+                    continue;
+                var data = pair.Split('=');
+                d.Add(int.Parse(data[0]), (KeyCode)int.Parse(data[1]));
+            }
+            return d;
+        }
+        public static void SetBindData(Dictionary<int, KeyCode> dictionary)
+        {
+            binds = "";
+            foreach (var pair in dictionary)
+                binds += (binds == "" ? "" : ";") + pair.Key + "=" + (int)pair.Value;
+        }
+        public static string GetCustomBind(int slot)
+        {
+            var data = GetBindData();
+            if (data.ContainsKey(slot))
+                return data[slot].GetName();
+            return "?";
+        }
     }
 }
