@@ -140,16 +140,20 @@ namespace ExtraVacSlot
             foreach (var value in set) if (predicate(value)) return value;
             return default(T);
         }
-        public static float GetChildWidth(this RectTransform main)
+        public static float GetChildWidth(this RectTransform main, bool excludeFirst = false)
         {
-            var r = main.GetChildSize();
+            var r = main.GetChildSize(excludeFirst);
             return r.y - r.x;
         }
-        public static Vector2 GetChildSize(this RectTransform main)
+        public static Vector2 GetChildSize(this RectTransform main, bool excludeFirst = false)
         {
             Vector2 s = new Vector2(main.rect.x, main.rect.x + main.rect.width);
+            if (excludeFirst)
+                s = new Vector2(float.PositiveInfinity, float.NegativeInfinity);
             foreach (RectTransform rect in main)
             {
+                if (!rect.gameObject.activeSelf)
+                    continue;
                 var c = rect.GetChildSize();
                 s = new Vector2(Mathf.Min(c.x + rect.localPosition.x, s.x), Mathf.Max(c.y + rect.localPosition.x, s.y));
             }
@@ -238,7 +242,7 @@ namespace ExtraVacSlot
             var layout = __instance.GetComponent<HorizontalLayoutGroup>();
             layout.padding.left = (int)(mask.rectTransform.rect.height * 0.2f);
             layout.padding.right = layout.padding.left;
-            mask.rectTransform.sizeDelta *= 1.2f;
+            mask.rectTransform.sizeDelta *= 2f;
             var l = mask.rectTransform.offsetMin.y;
             mask.rectTransform.localPosition -= new Vector3(0, l, 0);
             mask.rectTransform.sizeDelta += new Vector2(0, l);
@@ -295,7 +299,7 @@ namespace ExtraVacSlot
         public static void Prefix(AmmoSlotUI __instance)
         {
             var origin = __instance.AddOrGetComponent<AnimationHandler>();
-            var childWidth = origin.RectTransform.GetChildWidth();
+            var childWidth = origin.RectTransform.GetChildWidth(true);
             var selfWidth = origin.RectTransform.rect.width;
             if (childWidth > selfWidth && __instance.player.Ammo.ammoModel.usableSlots > 1)
             {
