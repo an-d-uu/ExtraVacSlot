@@ -57,8 +57,7 @@ namespace ExtraVacSlot
             ["]"] = KeyCode.RightBracket,
             ["}"] = KeyCode.RightCurlyBracket
         };
-        public static List<string> autoComplete = new List<string>();
-
+        public static List<string> autoComplete = new List<string>() { "reset" };
         public Main()
         {
             SRML.Config.Parsing.ParserRegistry.RegisterParser(new keybindDictionaryParser());
@@ -242,11 +241,11 @@ namespace ExtraVacSlot
             var layout = __instance.GetComponent<HorizontalLayoutGroup>();
             layout.padding.left = (int)(mask.rectTransform.rect.height * 0.2f);
             layout.padding.right = layout.padding.left;
-            mask.rectTransform.sizeDelta *= 2f;
+            mask.rectTransform.sizeDelta *= 2.5f;
             var l = mask.rectTransform.offsetMin.y;
             mask.rectTransform.localPosition -= new Vector3(0, l, 0);
             mask.rectTransform.sizeDelta += new Vector2(0, l);
-            layout.childAlignment = TextAnchor.MiddleLeft;
+            layout.childAlignment = TextAnchor.LowerLeft;
             var extraSlots = Config.slots - __instance.lastSlotCounts.Length;
             var sU = new AmmoSlotUI.Slot[extraSlots];
             for (int i = extraSlots - 1; i >= 0; i--)
@@ -367,12 +366,12 @@ namespace ExtraVacSlot
                 __instance.meshText.text = Config.GetCustomBind(custom[__instance]);
             return false;
         }
-        public static void Update(int slot)
+        public static void Update(int slot = -1)
         {
-            var text = Config.GetCustomBind(slot);
             foreach (var pair in custom)
-                if (pair.Key && pair.Value == slot)
+                if (pair.Key && (slot == -1 || pair.Value == slot))
                 {
+                    var text = Config.GetCustomBind(pair.Value);
                     if (pair.Key.text)
                         pair.Key.text.text = text;
                     if (pair.Key.meshText)
@@ -414,7 +413,7 @@ namespace ExtraVacSlot
         public override string Description => "gets or sets the number of extra slots";
         public override bool Execute(string[] args)
         {
-            if (args.Length < 1)
+            if (args == null || args.Length < 1)
             {
                 Main.Log("Slot count is " + Config.slots + " (" + Main.defaultSlots + " default + " + Config.extraSlots + " extra)" );
                 return true;
@@ -448,10 +447,17 @@ namespace ExtraVacSlot
         public override string Description => "gets or sets the key bound to the specified slot";
         public override bool Execute(string[] args)
         {
-            if (args.Length < 1)
+            if (args == null || args.Length < 1)
             {
                 Main.Log("Not enough arguments");
                 return false;
+            }
+            if (args[0] == "reset")
+            {
+                Config.ResetBinds();
+                Main.SaveConfig();
+                Main.LogSuccess("Binds have been reset to default");
+                return true;
             }
             if (!int.TryParse(args[0], out int v))
             {
@@ -465,23 +471,37 @@ namespace ExtraVacSlot
             }
             if (args.Length >= 2)
             {
-                if (!args[1].TryParseKeyCode(out KeyCode k))
+                if (args[1] == "reset")
+                {
+                    Config.ResetBinds(v);
+                    Main.LogSuccess("Bind has been reset to default");
+                }
+                else if (args[1].TryParseKeyCode(out KeyCode k))
+                {
+                    Config.SetBind(v, k);
+                    Main.LogSuccess("Bind has been updated");
+                }
+                else
                 {
                     Main.LogError(args[1] + " failed to parse as a key");
                     return true;
                 }
-                Config.SetBind(v, k);
                 Main.SaveConfig();
-                
-                Patch_XlateKeyText_OnKeysChanged.Update(v);
-                Main.LogSuccess("Bind has been updated");
-            } else
+            }
+            else
                 Main.Log("Bind for slot " + v + " is " + Config.GetCustomBind(v));
             return true;
         }
         public override List<string> GetAutoComplete(int argIndex, string argText)
         {
-            if (argIndex == 2)
+            if (argIndex == 0)
+            {
+                var l = new List<string>() { "reset" };
+                for (int i = Main.defaultSlots; i < Config.slots; i++)
+                    l.Add(i.ToString());
+                return l;
+            }
+            if (argIndex == 1)
                 return Main.autoComplete;
             return base.GetAutoComplete(argIndex, argText);
         }
@@ -492,18 +512,21 @@ namespace ExtraVacSlot
     {
         static Config()
         {
+            ResetBinds();
         }
         public static int extraSlots = 3;
         public static int slots => Main.defaultSlots + extraSlots;
         public static Dictionary<int, KeyCode> binds = new Dictionary<int, KeyCode>();
-        public static void SetBind(int slot, KeyCode key)
+        public static void SetBind(int slot, KeyCode key, bool Update = true)
         {
             if (key == KeyCode.None)
-                RemoveBind(slot);
+                RemoveBind(slot, false);
             else if (binds.ContainsKey(slot))
                 binds[slot] = key;
             else
                 binds.Add(slot, key);
+            if (Update)
+                Patch_XlateKeyText_OnKeysChanged.Update(slot);
         }
         public static KeyCode GetBind(int slot)
         {
@@ -512,16 +535,31 @@ namespace ExtraVacSlot
             else
                 return KeyCode.None;
         }
-        public static void RemoveBind(int slot)
+        public static void RemoveBind(int slot, bool Update = true)
         {
             if (binds.ContainsKey(slot))
                 binds.Remove(slot);
+            if (Update)
+                Patch_XlateKeyText_OnKeysChanged.Update(slot);
         }
         public static string GetCustomBind(int slot)
         {
             if (binds.ContainsKey(slot))
                 return binds[slot].GetName();
             return "?";
+        }
+        public static void ResetBinds(params int[] slots)
+        {
+            if (slots == null || slots.Length == 0)
+            {
+                binds.Clear();
+                for (int i = Main.defaultSlots; i <= 9; i++)
+                    binds.Add(i, KeyCode.Alpha1 + (i == 9 ? -1 : i) + i);
+            }
+            else
+                foreach (var slot in slots)
+                    SetBind(slot, (slot >= Main.defaultSlots && slot <= 9) ? KeyCode.Alpha1 + (slot == 9 ? -1 : slot) : KeyCode.None, false);
+            Patch_XlateKeyText_OnKeysChanged.Update();
         }
     }
 
